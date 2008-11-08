@@ -1,4 +1,5 @@
 require 'beanstalk-client.rb'
+require 'ruby-debug'
 
 DEFAULT_PORT = 11300
 SERVER_IP = '127.0.0.1'
@@ -52,10 +53,11 @@ end
 
 class BeanDistributor < BeanBase
   
-  def initialize(amount)
-    @messages = amount
+  def initialize(chunks,points_per_chunk)
+    @chunks = chunks
+    @points_per_chunk = points_per_chunk
     @messages_out = 0
-    @total = 0
+    @circle_count = 0
   end
 
   def get_incoming_results(queue)
@@ -66,7 +68,7 @@ class BeanDistributor < BeanBase
       end
       @messages_out -= 1
       print "." #display that we received another result
-      @total += result
+      @circle_count += result
     else
       #do nothing
     end
@@ -77,8 +79,8 @@ class BeanDistributor < BeanBase
     results_queue = get_queue('results')
     #put all the work on the request queue
     puts "distributor sending out #{@messages} jobs"
-    @messages.times do |num|
-      msg = BeanRequest.new(1,num)
+    @chunks.times do |num|
+      msg = BeanRequest.new(1,@points_per_chunk)
       #Take our ruby object and convert it to yml and put it on the queue
       request_queue.yput(msg,pri=DEFAULT_PRIORITY, delay=0, ttr=TTR)
       @messages_out += 1
@@ -89,17 +91,16 @@ class BeanDistributor < BeanBase
     while @messages_out > 0
       get_incoming_results(results_queue)
     end
-
-    puts "\nreceived all the results the total was: #{@total}"
-
+    npoints = @chunks * @points_per_chunk
+    pi = 4.0*@circle_count/(npoints)
+    puts "\nreceived all the results our estimate for pi is: #{pi}"
   end
 
 end
 
 class BeanWorker < BeanBase
 
-  def initialize(amount)
-    @messages = amount
+  def initialize()
   end
   
   def write_result(queue, result)
@@ -107,14 +108,27 @@ class BeanWorker < BeanBase
     queue.yput(msg,pri=DEFAULT_PRIORITY, delay=0, ttr=TTR)
   end
   
+  def in_circle
+    #generate 2 random numbers see if they are in the circle
+    range = 1000000.0
+    radius = range / 2
+    xcord = rand(range) - radius
+    ycord = rand(range) - radius
+    if( (xcord**2) + (ycord**2) <= (radius**2) )
+      return 1
+    else
+      return 0
+    end
+  end
+
   def start_worker
     request_queue = get_queue('requests')
     results_queue = get_queue('results')
-    # @messages.times do |num|
     while(true)
       result = 0
       take_msg(request_queue) do |body|
-        result = body.count * body.count
+        chunks = body.count
+        chunks.times { result += in_circle}
       end
       write_result(results_queue,result)
     end
@@ -144,8 +158,9 @@ class BeanResult
 end
 
 #write X messages on the queue
-num = 10
-workers = 6
+chunks = 100
+points_per_chunk = 10000
+workers = 5
 
 # Most of the time you will have two entirely separate classes
 # but to make it easy to run this example we will just fork and start our server
@@ -153,14 +168,14 @@ workers = 6
 # if we received all the messages we expected.
 puts "starting distributor"
 server_pid = fork {
-  BeanDistributor.new(num).start_distributor
+  BeanDistributor.new(chunks,points_per_chunk).start_distributor
 }
 
 puts "starting client(s)"
 client_pids = []
 workers.times do |num|
   client_pid = fork {
-    BeanWorker.new(num).start_worker
+    BeanWorker.new.start_worker
   }
   client_pids << client_pid
 end
