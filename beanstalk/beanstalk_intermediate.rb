@@ -124,6 +124,7 @@ class BeanWorker < BeanBase
   def start_worker
     request_queue = get_queue('requests')
     results_queue = get_queue('results')
+    #get requests and do the work until the worker is killed
     while(true)
       result = 0
       take_msg(request_queue) do |body|
@@ -157,9 +158,12 @@ class BeanResult
   end
 end
 
-#write X messages on the queue
+#how many different jobs we should do
 chunks = 100
+#how many points to calculate per chunk
 points_per_chunk = 10000
+#how many workers should we have
+#(normally different machines, in our example fork them off)
 workers = 5
 
 # Most of the time you will have two entirely separate classes
